@@ -1,0 +1,11 @@
+{
+  "name": "capa-cpp",
+  "version-string": "0.1.0",
+  "description": "C++ reimplementation of CAPA (TTD dynamic backend path)",
+  "builtin-baseline": "2475cc332a47b3a63bb3de58293bdab7726613ca",
+  "dependencies": [
+    "nlohmann-json",
+    "yaml-cpp",
+    "zydis"
+  ]
+}

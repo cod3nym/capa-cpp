@@ -1,0 +1,10 @@
+{
+  "name": "ida-capa",
+  "version-string": "0.1.0",
+  "description": "capa as an IDA Pro plugin",
+  "builtin-baseline": "2475cc332a47b3a63bb3de58293bdab7726613ca",
+  "dependencies": [
+    "nlohmann-json",
+    "yaml-cpp"
+  ]
+}

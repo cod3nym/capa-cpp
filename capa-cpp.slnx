@@ -1,0 +1,8 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="capa-cpp/capa-cpp.vcxproj" Id="491648a6-b1c9-4db3-bd35-29a1d99646c8" />
+  <Project Path="ida-capa/ida-capa.vcxproj" Id="6d1f0e4c-9a2b-4f77-b3e5-2c8a41f0d913" />
+</Solution>
