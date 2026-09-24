@@ -89,6 +89,12 @@ ida_add_plugin(ida-capa
         ${CAPA_SRC_DIR}/static/symbol_map.cpp
         ${CAPA_SRC_DIR}/minidump/pe.cpp
         ${CAPA_SRC_DIR}/minidump/process.cpp
+        # capa's own ResultDocument JSON renderer, for the Python capa explorer
+        # plugin's native-backend bridge (see ida-capa/analysis.cpp's
+        # build_render_doc() and plugin.cpp's HeadlessCmd::Analyze).
+        ${CAPA_SRC_DIR}/render.cpp
+        ${CAPA_SRC_DIR}/render_tree.cpp
+        ${CAPA_SRC_DIR}/match_retention.cpp
         # The IDA backend: only ever built into the plugin, never into capa-cpp.exe.
         ${CAPA_SRC_DIR}/ida/helpers.cpp
         ${CAPA_SRC_DIR}/ida/global_.cpp

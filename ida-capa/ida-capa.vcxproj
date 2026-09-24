@@ -161,6 +161,18 @@
     <ClCompile Include="$(CapaSrcDir)\minidump\process.cpp">
       <ObjectFileName>$(IntDir)core\</ObjectFileName>
     </ClCompile>
+    <!-- capa's own ResultDocument JSON renderer, for the Python capa explorer
+         plugin's native-backend bridge (analysis.cpp's build_render_doc(),
+         plugin.cpp's HeadlessCmd::Analyze). -->
+    <ClCompile Include="$(CapaSrcDir)\render.cpp">
+      <ObjectFileName>$(IntDir)core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(CapaSrcDir)\render_tree.cpp">
+      <ObjectFileName>$(IntDir)core\</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="$(CapaSrcDir)\match_retention.cpp">
+      <ObjectFileName>$(IntDir)core\</ObjectFileName>
+    </ClCompile>
   </ItemGroup>
 
   <!-- The IDA backend: only ever built into the plugin, never into capa-cpp.exe. -->

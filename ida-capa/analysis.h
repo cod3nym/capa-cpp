@@ -16,6 +16,8 @@
 #include <string>
 #include <vector>
 
+#include "render.h"
+
 namespace idacapa {
 
 // What a row stands for. Drives the icon-ish prefix, whether the row participates in
@@ -86,7 +88,15 @@ ResultsDoc group_by_function(const ResultsDoc& doc);
 // Run capa over the open database. Shows a wait box and honours cancellation, so it
 // must be called from the UI thread. Returns false and fills `error` on failure or
 // when the user cancelled (with `error` empty in the cancel case).
-bool run_analysis(const std::string& rules_dir, ResultsDoc& out, std::string& error);
+//
+// `result_document_json`, when not null, also receives capa's upstream-schema
+// ResultDocument JSON (capa::render::render_json()) built from the same analysis run
+// -- the form the Python capa explorer plugin's own ResultDocument.from_file()/
+// model_validate_json() consumes. Building it is folded into this same pass rather
+// than re-run separately: the RuleSet/StaticCapabilities/IdaExtractor it needs only
+// live for the duration of this function's analysis block.
+bool run_analysis(const std::string& rules_dir, ResultsDoc& out, std::string& error,
+                  std::string* result_document_json = nullptr);
 
 // Is the open database something this plugin can analyse at all?
 bool database_is_supported(std::string& why_not);

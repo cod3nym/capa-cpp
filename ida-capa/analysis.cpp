@@ -7,8 +7,10 @@
 #include <map>
 #include <set>
 
+#include "feature.h"
 #include "ida/extractor.h"
 #include "plugin.h"
+#include "render.h"
 #include "rules.h"
 #include "settings.h"
 #include "static_caps.h"
@@ -336,6 +338,59 @@ std::string scope_name(const capa::Rule& rule) {
     return "file";
 }
 
+// ---------------------------------------------------------------------------
+// capa::render::Doc (capa's own ResultDocument schema), for the Python capa explorer
+// plugin's native-backend bridge. Mirrors capa-cpp/src/minidump/analysis.cpp's
+// build_doc() -- same shape, IDA's own database in place of a mapped dump.
+// ---------------------------------------------------------------------------
+
+capa::render::Doc build_render_doc(const capa::ida::IdaExtractor& extractor,
+                                   const capa::StaticCapabilities& caps,
+                                   const std::string& rules_dir) {
+    capa::render::Doc doc;
+    doc.flavor = capa::render::Flavor::Static;
+    doc.extractor_name = "IdaFeatureExtractor";
+    doc.hashes = extractor.get_sample_hashes();
+
+    const bool is_64 = capa::ida::is_64bit();
+    doc.arch = is_64 ? capa::ARCH_AMD64 : capa::ARCH_I386;
+    switch (inf_get_filetype()) {
+        case f_PE:
+            doc.os = capa::OS_WINDOWS;
+            doc.format = capa::FORMAT_PE;
+            break;
+        case f_ELF:
+            // capa-cpp does not detect the ELF's target OS (see the README's IDA
+            // plugin limits); Linux is the common case and a better default than
+            // "unknown" without claiming detection that is not there.
+            doc.os = capa::OS_LINUX;
+            doc.format = capa::FORMAT_ELF;
+            break;
+        default:
+            // BIN/COFF: no container to read a format from, same as an unbacked
+            // region in a process dump.
+            doc.format = is_64 ? capa::FORMAT_SC64 : capa::FORMAT_SC32;
+            break;
+    }
+
+    doc.static_layout.reserve(caps.functions.size());
+    doc.scope_feature_counts.reserve(caps.functions.size());
+    for (const capa::FunctionInfo& fi : caps.functions) {
+        capa::render::StaticFunction sf;
+        sf.address = fi.address;
+        sf.matched_basic_blocks = fi.matched_basic_blocks;
+        doc.static_layout.push_back(std::move(sf));
+        doc.scope_feature_counts.emplace_back(fi.address, fi.feature_count);
+    }
+    doc.file_feature_count = caps.feature_count;
+    doc.rule_paths.push_back(rules_dir);
+
+    doc.base_address = extractor.get_base_address();
+    doc.library_functions = caps.library_functions;
+
+    return doc;
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -430,10 +485,6 @@ ResultsDoc ResultsDoc::from_json(const std::string& text) {
     }
     return doc;
 }
-
-// ---------------------------------------------------------------------------
-// "show results by function"
-// ---------------------------------------------------------------------------
 
 std::string strip_match_count(const std::string& label) {
     static const std::string suffix = " matches)";
@@ -532,10 +583,12 @@ bool database_is_supported(std::string& why_not) {
     return true;
 }
 
-bool run_analysis(const std::string& rules_dir, ResultsDoc& out, std::string& error) {
+bool run_analysis(const std::string& rules_dir, ResultsDoc& out, std::string& error,
+                  std::string* result_document_json) {
     error.clear();
     out = ResultsDoc{};
     out.rules_dir = rules_dir;
+    if (result_document_json) result_document_json->clear();
 
     msg("capa: analysis starting (build %s)\n", BUILD_STAMP);
     show_wait_box("capa: loading rules ...");
@@ -607,6 +660,14 @@ bool run_analysis(const std::string& rules_dir, ResultsDoc& out, std::string& er
                     static_cast<int>(mods.size()), names.c_str());
             msg("capa: %s\n", out.skipped_note.c_str());
             msg("capa: use \"Scan Windows system modules\" to include them.\n");
+        }
+
+        if (result_document_json) {
+            capa::render::Doc doc = build_render_doc(extractor, caps, rules_dir);
+            char input_path[QMAXPATH];
+            get_input_file_path(input_path, sizeof(input_path));
+            capa::render::RenderInput in{ruleset, caps.matches, doc, input_path, {}};
+            *result_document_json = capa::render::render_json(in);
         }
     } catch (const Cancelled&) {
         return false;  // user's choice; no error message
