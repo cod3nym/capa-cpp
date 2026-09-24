@@ -380,7 +380,14 @@ std::vector<FeaturePair> StaticExtractor::extract_insn_features(const Function& 
 std::vector<FunctionHandle> StaticExtractor::get_functions() const {
     std::vector<FunctionHandle> out;
     out.reserve(ws_.functions().size());
-    for (const Function& f : ws_.functions()) out.push_back({va_addr(f.va), &f});
+    for (const Function& f : ws_.functions()) {
+        // A thunk only forwards: its one behaviour is the API it reaches, which a caller's
+        // own `call` already resolves through it, and in a trace the call is recorded where
+        // it happens. Matched here as well, it became a capability of the stub itself,
+        // reported every time anything ran through it.
+        if (f.thunk) continue;
+        out.push_back({va_addr(f.va), &f});
+    }
     return out;
 }
 

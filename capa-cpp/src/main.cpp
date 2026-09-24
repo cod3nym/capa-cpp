@@ -1048,7 +1048,7 @@ static int run(const std::string& report_path, const std::string& rules_dir, Out
                const std::vector<std::string>& argv, bool feature_filter,
                std::size_t max_match_trees, bool matches_only, bool match_evidence,
                bool sparse_evidence, const std::string& out_path,
-               render::DocFormat format) {
+               render::DocFormat format, bool top_level_calls) {
     const bool timing = std::getenv("CAPA_CPP_TIMING") != nullptr;
     auto t0 = std::chrono::steady_clock::now();
     auto lap = [&](const char* what) {
@@ -1087,7 +1087,8 @@ static int run(const std::string& report_path, const std::string& rules_dir, Out
     lap("build feature filter");
 
     Capabilities caps =
-        find_dynamic_capabilities(ruleset, extractor, filter, max_match_trees, match_evidence);
+        find_dynamic_capabilities(ruleset, extractor, filter, max_match_trees, match_evidence,
+                                  top_level_calls);
     lap("match");
     if (timing)
         std::fprintf(stderr,
@@ -1224,7 +1225,7 @@ static int run_main(std::vector<std::string> args) {
         std::fprintf(stderr,
                      "usage: capa-cpp <report.ttd.json> -r <rules-dir> [-j | -vv]\n"
                      "                [--matches-only] [--match-evidence] [--sparse-evidence]\n"
-                     "                [--max-match-trees <n>] [-o <out.json>]\n"
+                     "                [--max-match-trees <n>] [-o <out.json>] [--top-level-calls]\n"
                      "       capa-cpp <report.ttd.json> --dump-features\n"
                      "       capa-cpp --scan-code-manifest <manifest.json> -r <rules-dir>\n"
                      "                [--dumps-dir <dir>] [-o <out.json>] [--quiet]\n"
@@ -1410,6 +1411,7 @@ static int run_main(std::vector<std::string> args) {
     // captured, and where that feature was. Composes with --matches-only, which is how it
     // is meant to be used -- lean, plus the one thing a reader cannot work out for itself.
     bool match_evidence = false;
+    bool top_level_calls = false;
     // Emit a match whose tree was capped as its address alone, rather than as a pair whose
     // second element is a placeholder saying the tree is not there. Opt-in: it is the one
     // shape whose elements are not all the same, and a reader that unpacks each of them as
@@ -1452,6 +1454,8 @@ static int run_main(std::vector<std::string> args) {
             matches_only = true;
         } else if (a == "--match-evidence") {
             match_evidence = true;
+        } else if (a == "--top-level-calls") {
+            top_level_calls = true;
         } else if (a == "--sparse-evidence") {
             sparse_evidence = true;
         } else if (a == "--msgpack") {
@@ -1478,6 +1482,12 @@ static int run_main(std::vector<std::string> args) {
             trees_given = true;
         } else if (report_path.empty() && !a.empty() && a[0] != '-') {
             report_path = a;
+        } else {
+            // Refused rather than skipped: a flag this build predates would otherwise change
+            // nothing and say nothing, and the caller would read the result as if it had.
+            std::fprintf(stderr, "error: unknown option, missing value, or extra argument: %s\n",
+                         a.c_str());
+            return 2;
         }
     }
 
@@ -1532,5 +1542,5 @@ static int run_main(std::vector<std::string> args) {
         return 2;
     }
     return run(report_path, rules_dir, mode, args, feature_filter, max_match_trees, matches_only,
-               match_evidence, sparse_evidence, out_path, format);
+               match_evidence, sparse_evidence, out_path, format, top_level_calls);
 }

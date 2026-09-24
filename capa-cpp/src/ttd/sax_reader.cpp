@@ -116,6 +116,7 @@ public:
                 break;
             case Loc::CallItem:
                 if (key_ == "position") call_.position = std::move(value);
+                else if (key_ == "returnPosition") call_.return_position = std::move(value);
                 else if (key_ == "module") call_.module = out_.strings.intern(std::move(value));
                 else if (key_ == "api") call_.api = out_.strings.intern(std::move(value));
                 break;

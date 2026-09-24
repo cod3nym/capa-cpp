@@ -1,26 +1,24 @@
 # capa-cpp
 
 > [!Warning]
-> This project was entirely generated using Claude. I performed testing for my own use cases,
-> but you may run into issues. If you do, feel free to open an issue on this repository!
+>This project was entirely generated using Claude. I performed testing for my own use cases, but
+> you may run into issues. If you do, feel free to open an issue on this repository!
 
-A targeted C++ reimplementation of [capa](https://github.com/mandiant/capa), Mandiant's tool 
-for identifying capabilities in executable code. It loads native capa rules and is intented 
-to produce the same matches, albeit built for targeted use cases (see below). While manual 
-command-line usage of capa-cpp is allowed, it's not recommended for TTD traces, as it requires 
-certain files be present at runtime. The main reason I developed this was to run it via other 
-tools (and also as an IDA plugin).
+A targeted C++ reimplementation of [capa](https://github.com/mandiant/capa), Mandiant's tool for
+identifying capabilities in executable code. It loads native capa rules and aims to produce the
+same matches for the use cases below. It is mainly meant to be driven by other tools, such as
+ttd-capa, and to run as an IDA plugin. Running it by hand on TTD traces works but needs the files
+those tools produce.
 
-Currently implemented feature-extractor backends include:
+Feature-extractor backends:
 - Microsoft's Time Travel Debugging (TTD)
 - Windows process memory dumps
-- Windows x86/x64 PE files (**Only in IDA Pro**)
+- Windows x86/x64 PE files (**IDA Pro only**)
 
 ## How it works
 
-capa consists of multiple backends which extract features through various means. These 
-features include things like API calls, strings, or numbers then are fed to a common 
-engine that performs rule matching.
+Each backend extracts features, such as API calls, strings and numbers, and a common engine
+matches rules against them.
 
 | Input | Backend | Scopes |
 |---|---|---|
@@ -64,10 +62,9 @@ vcpkg install --triplet x64-windows-static-md --x-manifest-root=ida-capa
 
 ## Usage
 ### Command Line (`capa-cpp.exe`)
-Command line usage supports either **TTD traces or Windows process memory dumps**. That 
-said, you cannot pass a raw TTD trace to capa-cpp (that's different project, 
-ttd-capa). You need to have a compatible JSON report and, if you want code scanning,
-a code manifest and TTD memory dumps.
+The command line accepts **TTD reports or Windows process memory dumps**. It does not read a raw
+TTD trace: ttd-capa turns the trace into a JSON report and, for code scanning, a code manifest and
+memory snapshots.
 
 ```sh
 # TTD dynamic: report of recorded API calls
@@ -80,9 +77,8 @@ capa-cpp <report.ttd.json> -r <rules-dir> --matches-only --msgpack -o out.mp
 capa-cpp --scan-code-manifest <manifest.json> -r <rules-dir> [--dumps-dir <dir>] [-o out.json]
 ```
 
-To scan Windows process memory dumps, use the below command line template. As a note, the memory 
-dump isn't required to have a `.dmp` file extension. The file type is determined based on a memory 
-dump file's magic bytes.
+To scan a Windows process memory dump, use the command below. The file type comes from the file's
+magic bytes, so the `.dmp` extension is optional.
 ```
 capa-cpp <process.dmp> -r <rules-dir> [-j | -vv] [--module <name>] [--all-modules]
 ```
@@ -106,10 +102,13 @@ The four after `--msgpack` are what keeps a large trace's output manageable.
 | `--no-feature-filter` | keep extracted features no loaded rule reads (parity runs) |
 | `-f <format>` | accepted and ignored; TTD is the only report format |
 | `--msgpack` | encode the JSON document as MessagePack; needs `-j` or `--matches-only` |
-| `--matches-only` | rule metadata and match addresses only - no evidence trees, no call layout; implies `-j` |
+| `--matches-only` | rule metadata and match addresses only, with no evidence trees or call layout; implies `-j` |
 | `--match-evidence` | one leaf per match, the feature that completed it, instead of a tree |
 | `--sparse-evidence` | emit a match whose tree was dropped as a bare address rather than an empty placeholder |
 | `--max-match-trees <n>` | evidence trees kept per rule (default 256; `0` keeps all) |
+| `--top-level-calls` | match only calls made outside every other recorded call on their thread, using each call's `returnPosition` |
+
+Unknown options are rejected rather than ignored.
 
 #### Flags: TTD Code Manifests
 
@@ -141,14 +140,12 @@ This path always writes to stdout; `-o` is not read.
 | `--dump-features` | print the extracted features and exit |
 
 ### IDA Pro Plugin
-Open a x86/x64 binary with the plugin loaded, then navigate to `Edit > Plugins > CAPA C++ > Analyze`.
-Then, provide the path to your CAPA ruleset. Once analysis is complete, you'll see a structural heirarchy
- of the capa matches.
+Open an x86/x64 binary with the plugin loaded, choose `Edit > Plugins > CAPA C++ > Analyze`, and
+give the path to a capa ruleset. When analysis completes, the matches appear as a hierarchy.
 
 ![](assets/IDA-Matches.png)
 
-On top of basic capa analysis, the IDA Pro plugin allows you to annotate matches with highlighting 
-and comments.
+The plugin can also annotate matches in the database with highlighting and comments.
 
 ![](assets/IDA-Annotation.png)
 

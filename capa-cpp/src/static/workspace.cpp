@@ -71,13 +71,32 @@ void Workspace::recover(std::vector<std::uint64_t> entries) {
         if (is_executed(e)) fn.insert(e);
 
     std::vector<std::pair<std::uint64_t, std::uint64_t>> xrefs;  // (target, src)
+    // Jump-thunk candidates, confirmed after the xrefs are known (step 2b).
+    std::vector<std::uint64_t> thunk_candidates;
+    std::set<std::uint64_t> jumped_to;  // targets of a jump (not a call) inside the region
+    std::uint64_t prev_end = 0;   // where the previous executed instruction ended
+    bool prev_falls = false;      // and whether execution could continue past it
     for (std::uint64_t va : executed_) {
         DecodedInsn insn = decode_uncached(va);
-        if (!insn.ok) continue;
+        if (!insn.ok) {
+            prev_falls = false;
+            continue;
+        }
         if ((insn.is_call || insn.is_cond_branch || insn.is_uncond_jmp) && insn.branch_target)
             xrefs.emplace_back(*insn.branch_target, va);
+        if ((insn.is_cond_branch || insn.is_uncond_jmp) && insn.branch_target)
+            jumped_to.insert(*insn.branch_target);
         if (insn.is_call && insn.branch_target && is_executed(*insn.branch_target))
             fn.insert(*insn.branch_target);
+        // A lone unconditional jump that leaves this region's code, and that nothing
+        // before it falls into. Either it is reached from outside or by a call, which makes
+        // it a thunk, or by a jump inside, which step 2b rules out.
+        bool const leaves = insn.is_indirect_branch ||
+                            (insn.branch_target && !is_executed(*insn.branch_target));
+        bool const fallen_into = prev_falls && prev_end == va;
+        if (insn.is_uncond_jmp && leaves && !fallen_into) thunk_candidates.push_back(va);
+        prev_end = mask_address(va + insn.length, arch_);
+        prev_falls = !(insn.is_ret || insn.is_uncond_jmp);
     }
 
     // 2. flatten the xrefs into one sorted array plus a target index.
@@ -93,6 +112,22 @@ void Workspace::recover(std::vector<std::uint64_t> entries) {
     xref_index_.shrink_to_fit();
     xref_srcs_.shrink_to_fit();
 
+    // 2b. Jump thunks become functions of their own. Without this a table of stubs --
+    // `jmp [rip+2]` then an 8-byte pointer, one per export of a module whose export table
+    // was redirected -- is entered from outside at every stub but has no call inside it,
+    // so the range rule below made one "function" of everything between two entries and
+    // handed it the api: features of every stub it swallowed. One wmplayer trace reported
+    // registry and system-information capabilities at LdrGetDllHandle's stub, each time
+    // anything called LdrGetDllHandle through it. A jump from inside the region means the
+    // jump is part of that code instead, so it stays put. A direct call does not: that makes
+    // it a function anyway, and it forwards the same way it does when entered from outside.
+    std::set<std::uint64_t> thunks;
+    for (std::uint64_t va : thunk_candidates) {
+        if (jumped_to.count(va) != 0) continue;
+        thunks.insert(va);
+        fn.insert(va);
+    }
+
     // 3. recover each function. `executed` is ground-truth code, so a function owns every
     // executed instruction from its entry up to the next function entry (viv attributes
     // all recovered code to some function; a pure flow walk would drop blocks reached only
@@ -102,6 +137,13 @@ void Workspace::recover(std::vector<std::uint64_t> entries) {
         std::uint64_t boundary =
             (i + 1 < fn_sorted.size()) ? fn_sorted[i + 1] : std::numeric_limits<std::uint64_t>::max();
         functions_.push_back(recover_function(fn_sorted[i], boundary));
+        // Only while the jump is all it holds. Executed code after it that no entry claims
+        // lands in the same function -- a jump-table case, which records no xref, or what a
+        // packer's `jmp rax` reaches -- and excluding the function would drop that code's
+        // features with it.
+        Function& f = functions_.back();
+        f.thunk = thunks.count(fn_sorted[i]) != 0 && f.blocks.size() == 1 &&
+                  f.blocks[0].insns.size() == 1;
     }
     cache_.clear();
     cache_.rehash(0);

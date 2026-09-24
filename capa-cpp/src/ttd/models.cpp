@@ -67,6 +67,7 @@ Call parse_call(const json& j, Report& r) {
     c.tid = get_int(j, "tid");
     c.seq = get_int(j, "seq");
     c.position = get_str(j, "position");
+    c.return_position = get_str(j, "returnPosition");
     c.module = pool.intern(get_str(j, "module"));
     c.api = pool.intern(get_str(j, "api"));
     c.arg_offset = static_cast<std::uint32_t>(r.args.size());

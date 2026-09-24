@@ -133,6 +133,9 @@ struct Call {
     std::int64_t tid = 0;
     std::int64_t seq = 0;
     std::string position;
+    // Where the call returned, same form; empty when it never did. With `position` it is the
+    // call's interval, which is what says whether another call happened inside this one.
+    std::string return_position;
     std::uint32_t module = 0;     // index into Report::strings
     std::uint32_t api = 0;        // index into Report::strings
     std::uint32_t arg_offset = 0;  // start of this call's window into Report::args

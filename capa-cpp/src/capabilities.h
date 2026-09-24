@@ -56,8 +56,12 @@ struct Capabilities {
 // count and their addresses are unaffected; see match_retention.h.
 // `keep_evidence_leaves` (`--match-evidence`) keeps one leaf out of every tree, capped or
 // not, so a match can say which feature completed it after its tree is gone.
+// `top_level_calls` (`--top-level-calls`) matches only calls made outside every other recorded
+// call on their thread: the calls the program made, not the ones an API made while carrying one
+// out. See find_thread_capabilities.
 Capabilities find_dynamic_capabilities(const RuleSet& ruleset, const ttd::TtdExtractor& extractor,
                                        const FeatureFilter& filter, std::size_t max_match_trees,
-                                       bool keep_evidence_leaves = false);
+                                       bool keep_evidence_leaves = false,
+                                       bool top_level_calls = false);
 
 }  // namespace capa

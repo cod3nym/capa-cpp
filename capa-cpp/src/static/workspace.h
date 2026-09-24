@@ -43,6 +43,9 @@ struct BasicBlock {
 struct Function {
     std::uint64_t va = 0;
     std::vector<BasicBlock> blocks;     // blocks[0] is the entry block
+    // A jump thunk: a function that is one unconditional jump, not reached by a jump from
+    // inside the region, that only forwards to something else. See Workspace::recover.
+    bool thunk = false;
 };
 
 class Workspace {

@@ -2,8 +2,11 @@
 
 #include "match_retention.h"
 
+#include <cstdint>
+#include <cstdlib>
 #include <deque>
 #include <iterator>
+#include <optional>
 #include <set>
 #include <utility>
 
@@ -162,19 +165,48 @@ struct ThreadCapabilities {
     MatchResults call_matches;
 };
 
+// "SEQ:STEPS" in hex, as the report writes positions; nullopt for an empty or malformed one.
+std::optional<std::pair<std::uint64_t, std::uint64_t>> parse_position(const std::string& text) {
+    const std::size_t colon = text.find(':');
+    if (colon == std::string::npos || colon == 0 || colon + 1 == text.size()) return std::nullopt;
+    char* end = nullptr;
+    const std::uint64_t seq = std::strtoull(text.c_str(), &end, 16);
+    if (end != text.c_str() + colon) return std::nullopt;
+    const std::uint64_t steps = std::strtoull(text.c_str() + colon + 1, &end, 16);
+    if (*end != '\0') return std::nullopt;
+    return std::make_pair(seq, steps);
+}
+
 ThreadCapabilities find_thread_capabilities(const RuleSet& ruleset,
                                             const ttd::TtdExtractor& extractor,
                                             const ttd::ProcessHandle& ph,
                                             const ttd::ThreadHandle& th,
                                             const FeatureFilter& filter,
-                                            MatchRetention& retention) {
+                                            MatchRetention& retention,
+                                            bool top_level_calls) {
     FeatureSet features;
     MatchResults call_matches;
     SpanOfCallsMatcher span_matcher(ruleset);
 
+    // Return position of the top-level call running at the current point, if any. A TTD
+    // report holds every call a thread made, including the ones an API made while carrying
+    // out a call from the program. capa's dynamic rules are written against sandbox logs of
+    // the program's calls, and a span counts calls: the nested ones push apart the pair a rule
+    // needs (the sample's socket and connect, say) and add findings about Windows' own work.
+    // A call that never returned encloses nothing, so one lost return cannot silence the rest
+    // of a thread.
+    std::optional<std::pair<std::uint64_t, std::uint64_t>> open;
+
     const std::size_t call_count = extractor.call_count(ph, th);
     for (std::size_t idx = 0; idx < call_count; ++idx) {
         const ttd::CallHandle ch = extractor.call_at(ph, th, idx);
+        if (top_level_calls && ch.inner != nullptr) {
+            if (const auto at = parse_position(ch.inner->position)) {
+                if (open && *open <= *at) open.reset();
+                if (open) continue;  // made inside another recorded call
+                open = parse_position(ch.inner->return_position);
+            }
+        }
         CallCapabilities cc = find_call_capabilities(ruleset, extractor, ph, th, ch);
         // The span matcher keeps its own copy for the sliding window, so it goes first
         // and the thread-wide merge -- the one whose keys are nearly all new -- gets the
@@ -214,13 +246,15 @@ ProcessCapabilities find_process_capabilities(const RuleSet& ruleset,
                                               const ttd::TtdExtractor& extractor,
                                               const ttd::ProcessHandle& ph,
                                               const FeatureFilter& filter,
-                                              MatchRetention& retention) {
+                                              MatchRetention& retention,
+                                              bool top_level_calls) {
     FeatureSet process_features;
     MatchResults thread_matches, span_matches, call_matches;
 
     for (const auto& th : extractor.get_threads(ph)) {
         ThreadCapabilities tc =
-            find_thread_capabilities(ruleset, extractor, ph, th, filter, retention);
+            find_thread_capabilities(ruleset, extractor, ph, th, filter, retention,
+                                     top_level_calls);
         merge_features(process_features, std::move(tc.features), filter);
         merge_matches(thread_matches, std::move(tc.thread_matches), retention);
         merge_matches(span_matches, std::move(tc.span_matches), retention);
@@ -277,14 +311,15 @@ Capabilities find_dynamic_capabilities(const RuleSet& ruleset,
                                        const ttd::TtdExtractor& extractor,
                                        const FeatureFilter& filter,
                                        std::size_t max_match_trees,
-                                       bool keep_evidence_leaves) {
+                                       bool keep_evidence_leaves,
+                                       bool top_level_calls) {
     MatchRetention retention(max_match_trees, keep_evidence_leaves);
     MatchResults all_process, all_thread, all_span, all_call;
     Capabilities caps;
 
     for (const auto& ph : extractor.get_processes()) {
         ProcessCapabilities pc =
-            find_process_capabilities(ruleset, extractor, ph, filter, retention);
+            find_process_capabilities(ruleset, extractor, ph, filter, retention, top_level_calls);
         caps.process_feature_counts.emplace_back(ph.address, pc.feature_count);
         caps.peak_scope_features = std::max(caps.peak_scope_features, pc.feature_count);
         caps.peak_scope_locations = std::max(caps.peak_scope_locations, pc.location_count);
