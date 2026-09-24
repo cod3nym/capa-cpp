@@ -80,11 +80,6 @@ struct ResultsDoc {
 // that needs the rule's actual name has to take it back off again.
 std::string strip_match_count(const std::string& label);
 
-// The same results regrouped as capa's "show results by function" checkbox does:
-// one node per function, with the rules that matched inside it beneath. Rule matches
-// that are not inside a function are dropped, as in capa.
-ResultsDoc group_by_function(const ResultsDoc& doc);
-
 // Run capa over the open database. Shows a wait box and honours cancellation, so it
 // must be called from the UI thread. Returns false and fills `error` on failure or
 // when the user cancelled (with `error` empty in the cancel case).

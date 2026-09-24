@@ -17,6 +17,8 @@ enum : nodeidx_t {
     IDX_LIMIT_TO_FUNCTION = 4,
     IDX_SCAN_SYSTEM_MODULES = 5,
     IDX_FLAT_RESULTS = 6,
+    IDX_HEADLESS_OUTPUT_PATH = 7,
+    IDX_HEADLESS_RULE_NAME = 8,
 };
 
 netnode node() { return netnode(NODE_NAME, 0, /*do_create=*/true); }
@@ -92,6 +94,13 @@ void clear_cached_results() {
 std::string annotation_record() { return get_blob(ANNOTATION_TAG); }
 void set_annotation_record(const std::string& json) { set_blob(ANNOTATION_TAG, json); }
 void clear_annotation_record() { set_blob(ANNOTATION_TAG, ""); }
+
+std::string headless_output_path() { return get_str(IDX_HEADLESS_OUTPUT_PATH); }
+void set_headless_output_path(const std::string& path) {
+    set_str(IDX_HEADLESS_OUTPUT_PATH, path);
+}
+std::string headless_rule_name() { return get_str(IDX_HEADLESS_RULE_NAME); }
+void set_headless_rule_name(const std::string& name) { set_str(IDX_HEADLESS_RULE_NAME, name); }
 
 bool show_results_by_function() { return get_flag(IDX_BY_FUNCTION, false); }
 void set_show_results_by_function(bool on) { set_str(IDX_BY_FUNCTION, on ? "1" : "0"); }

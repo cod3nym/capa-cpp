@@ -205,8 +205,6 @@
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="settings.cpp" />
     <ClCompile Include="analysis.cpp" />
-    <ClCompile Include="view_results.cpp" />
-    <ClCompile Include="view_details.cpp" />
     <ClCompile Include="annotate.cpp" />
     <ClCompile Include="pseudocode.cpp" />
     <ClCompile Include="plugin.cpp" />
@@ -216,8 +214,6 @@
     <ClInclude Include="pch.h" />
     <ClInclude Include="settings.h" />
     <ClInclude Include="analysis.h" />
-    <ClInclude Include="view_results.h" />
-    <ClInclude Include="view_details.h" />
     <ClInclude Include="annotate.h" />
     <ClInclude Include="pseudocode.h" />
     <ClInclude Include="plugin.h" />

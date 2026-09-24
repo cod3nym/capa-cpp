@@ -1,7 +1,8 @@
 #include "plugin.h"
 
+#include <fstream>
+
 #include "annotate.h"
-#include "ida/helpers.h"
 #include "pseudocode.h"
 #include "settings.h"
 
@@ -12,30 +13,14 @@ const char* const WANTED_NAME = "capa explorer (C++)";
 namespace {
 
 const char* const ACTION_ANALYZE = "capacpp:analyze";
-const char* const ACTION_SHOW = "capacpp:show";
-const char* const ACTION_RULES = "capacpp:rules";
-const char* const ACTION_CLEAR = "capacpp:clear";
 const char* const ACTION_ANNOTATE = "capacpp:annotate";
-const char* const ACTION_ANNOTATE_SEL = "capacpp:annotate_sel";
 const char* const ACTION_UNANNOTATE = "capacpp:unannotate";
-const char* const ACTION_BY_FUNCTION = "capacpp:by_function";
-const char* const ACTION_LIMIT = "capacpp:limit";
-const char* const ACTION_SCAN_SYSTEM = "capacpp:scan_system";
-const char* const ACTION_FLAT = "capacpp:flat";
 
-// The explorer window's own context menu: everything that acts on the selected row or
-// changes what the window shows. Expanding and collapsing is the dirtree's own affair.
-const char* const POPUP_ACTIONS[] = {
-    ACTION_ANALYZE,     ACTION_ANNOTATE, ACTION_ANNOTATE_SEL, ACTION_UNANNOTATE,
-    ACTION_BY_FUNCTION, ACTION_LIMIT,    ACTION_SCAN_SYSTEM,  ACTION_FLAT,
-    ACTION_RULES,       ACTION_CLEAR,
-};
-
-// The commands a user wants without the explorer window in front of them live in a
+// The commands a user wants without the Python capa explorer running live in a
 // submenu of Edit > Plugins. It is the plugin's only entry there: PLUGIN_HIDE keeps
-// IDA from adding its own beside it. "Annotate selected rule only" is not among them:
-// it acts on the row under the cursor, so it is only meaningful from the window's
-// context menu.
+// IDA from adding its own beside it. "Annotate selected rule only" is not among
+// them: without a results window there is no row to select it from any more, so it
+// is reachable only headlessly, from the Python UI's own rule context menu.
 const char* const MENU_NAME = "capacpp:menu";
 const char* const MENU_LABEL = "CAPA C++";
 const char* const MENU_PATH = "Edit/Plugins/CAPA C++/";
@@ -43,7 +28,6 @@ const char* const PLUGINS_PATH = "Edit/Plugins/";
 // Where create_menu() puts a menu whose menupath it could not resolve: the menu bar.
 const char* const MENUBAR_PATH = "CAPA C++/";
 const char* const MENU_ACTIONS[] = {
-    ACTION_SHOW,
     ACTION_ANALYZE,
     ACTION_ANNOTATE,
     ACTION_UNANNOTATE,
@@ -87,50 +71,13 @@ void PluginCtx::register_actions() {
     register_action(ACTION_DESC_LITERAL_PLUGMOD(ACTION_ANALYZE, "Analyze", &m_analyze, this,
                                                 "Alt-F5",
                                                 "Find capabilities in this database", -1));
-    // Hiding the plugin's own Edit > Plugins entry took with it the one command that
-    // reopened the window without re-running the analysis, so it is a menu item now.
-    register_action(ACTION_DESC_LITERAL_PLUGMOD(
-        ACTION_SHOW, "Show Results", &m_show, this, nullptr,
-        "Open the capa explorer window on the results already in this database", -1));
-
-    register_action(ACTION_DESC_LITERAL_PLUGMOD(
-        ACTION_BY_FUNCTION, "Show results by function", &m_by_func, this, nullptr,
-        "Group the matched rules under the function they were found in", -1));
-    register_action(ACTION_DESC_LITERAL_PLUGMOD(
-        ACTION_LIMIT, "Limit results to current function", &m_limit, this, nullptr,
-        "Show only the rules that matched inside the function under the cursor", -1));
-    register_action(ACTION_DESC_LITERAL_PLUGMOD(
-        ACTION_SCAN_SYSTEM, "Scan Windows system modules", &m_scan_system, this, nullptr,
-        "Also analyse ntdll, kernel32 and the rest of System32. Off by default: in a "
-        "process dump those are Windows' capabilities, not the sample's", -1));
-    // Without this the tick mark never appears, however update() sets it.
-    update_action_checkable(ACTION_BY_FUNCTION, true);
-    update_action_checkable(ACTION_LIMIT, true);
-    register_action(ACTION_DESC_LITERAL_PLUGMOD(
-        ACTION_FLAT, "Show results as a flat list", &m_flat, this, nullptr,
-        "List every match with its namespace in a column instead of in folders. Use "
-        "this if the folder tree does not render correctly", -1));
-    update_action_checkable(ACTION_SCAN_SYSTEM, true);
-    update_action_checkable(ACTION_FLAT, true);
-
     register_action(ACTION_DESC_LITERAL_PLUGMOD(
         ACTION_ANNOTATE, "Annotate Results", &m_annotate, this, nullptr,
         "Colour and comment every address capa matched something at", -1));
-    register_action(ACTION_DESC_LITERAL_PLUGMOD(
-        ACTION_ANNOTATE_SEL, "Annotate selected rule only", &m_annotate_sel, this, nullptr,
-        "Colour and comment only the matches of the rule under the cursor", -1));
     register_action(ACTION_DESC_LITERAL_PLUGMOD(ACTION_UNANNOTATE, "Remove Results",
                                                 &m_unannotate, this, nullptr,
                                                 "Remove capa's annotations, restoring the "
                                                 "colours and comments it changed", -1));
-
-    register_action(ACTION_DESC_LITERAL_PLUGMOD(ACTION_RULES, "capa rules directory...",
-                                                &m_rules, this, nullptr,
-                                                "Choose which capa rules to load", -1));
-    register_action(ACTION_DESC_LITERAL_PLUGMOD(ACTION_CLEAR, "Clear capa results", &m_clear,
-                                                this, nullptr,
-                                                "Discard the results stored in this database",
-                                                -1));
 
     // Built after the actions exist: attaching one that is not registered yet does
     // nothing.
@@ -191,8 +138,7 @@ void PluginCtx::ensure_menu() {
             MENU_LABEL);
         return;
     }
-    msg("capa: could not attach capa's commands to any menu. They are on the capa "
-        "explorer window's context menu (Alt-F5 opens it).\n");
+    msg("capa: could not attach capa's commands to any menu.\n");
 }
 
 //-------------------------------------------------------------------------
@@ -204,31 +150,47 @@ void PluginCtx::unregister_actions() {
         for (const char* name : MENU_ACTIONS) detach_action_from_menu(m_menu_path.c_str(), name);
     m_menu_path.clear();
     delete_menu(MENU_NAME);
-    for (const char* name : {ACTION_ANALYZE, ACTION_SHOW, ACTION_RULES, ACTION_CLEAR,
-                             ACTION_ANNOTATE, ACTION_ANNOTATE_SEL, ACTION_UNANNOTATE,
-                             ACTION_BY_FUNCTION, ACTION_LIMIT, ACTION_SCAN_SYSTEM,
-                             ACTION_FLAT})
+    for (const char* name : {ACTION_ANALYZE, ACTION_ANNOTATE, ACTION_UNANNOTATE})
         unregister_action(name);
 }
 
 //-------------------------------------------------------------------------
-void PluginCtx::attach_actions(TWidget* w) {
-    if (w == nullptr) return;
-    // Attached permanently rather than from ui_populating_widget_popup: every one of
-    // these is always relevant in this window.
-    for (const char* name : POPUP_ACTIONS) attach_action_to_popup(w, nullptr, name);
-}
+// Running the plugin interactively (Alt-F5, the menu, or a bare
+// idaapi.load_and_run_plugin("ida-capa", 0) from Python) is the "Ui" HeadlessCmd:
+// everything else is a headless command from the Python capa explorer bridge.
+bool idaapi PluginCtx::run(size_t arg) {
+    switch (static_cast<HeadlessCmd>(arg)) {
+        case HeadlessCmd::Ping:
+            return true;
 
-//-------------------------------------------------------------------------
-// Running the plugin (Alt-F5 or Edit > Plugins) opens the results if we already have
-// some, and otherwise starts an analysis — the thing a user who just invoked it wants
-// in either case.
-bool idaapi PluginCtx::run(size_t /*arg*/) {
-    if (m_have_results || load_cached())
-        show_results();
-    else
-        analyze();
-    return true;
+        case HeadlessCmd::Analyze:
+            return run_headless_analyze();
+
+        case HeadlessCmd::AnnotateAll:
+            if (!m_have_results && !load_cached()) {
+                msg("capa: annotate requested with no analysis results available.\n");
+                return false;
+            }
+            annotate_all();
+            return true;
+
+        case HeadlessCmd::AnnotateSelected:
+            if (!m_have_results && !load_cached()) {
+                msg("capa: annotate requested with no analysis results available.\n");
+                return false;
+            }
+            annotate_selected();
+            return true;
+
+        case HeadlessCmd::RemoveAnnotations:
+            remove_annotations_action();
+            return true;
+
+        case HeadlessCmd::Ui:
+        default:
+            analyze();
+            return true;
+    }
 }
 
 //-------------------------------------------------------------------------
@@ -249,8 +211,8 @@ bool PluginCtx::load_cached() {
 
     m_doc = std::move(doc);
     m_have_results = true;
-    // Say where the results came from: a window full of stale rows is otherwise
-    // indistinguishable from a window full of fresh ones.
+    // Say where the results came from: a log full of stale counts is otherwise
+    // indistinguishable from fresh ones.
     msg("capa: loaded %zu cached rule match(es) from this database.\n", m_doc.rules.size());
 
     // The disassembly comments were saved with the database; the pseudocode markers
@@ -296,7 +258,6 @@ void PluginCtx::analyze() {
         info("capa found no capabilities in this database.");
         return;
     }
-    show_results();
     if (was_annotated) annotate_all();
 }
 
@@ -326,44 +287,55 @@ bool PluginCtx::do_analysis(const std::string& dir) {
 }
 
 //-------------------------------------------------------------------------
-// Run the rules over the database again without asking anything: for picking up rule
-// edits, or results that have gone stale against a database you have since renamed and
-// re-analysed.
-void PluginCtx::reanalyze() {
+// The headless Analyze command: same analysis as do_analysis(), driven entirely by
+// settings the Python bridge wrote beforehand (no prompting -- this must be safe to
+// call with no UI interaction at all), additionally emitting a ResultDocument JSON
+// for the bridge to read back.
+bool PluginCtx::run_headless_analyze() {
     const std::string dir = rules_dir();
     if (dir.empty()) {
-        analyze();  // nothing configured yet; that path asks for a rules directory
-        return;
+        msg("capa: headless analyze requested with no rules directory set.\n");
+        return false;
+    }
+    const std::string out_path = headless_output_path();
+    if (out_path.empty()) {
+        msg("capa: headless analyze requested with no output path set.\n");
+        return false;
     }
 
-    std::string why_not;
-    if (!database_is_supported(why_not)) {
-        warning("capa: %s", why_not.c_str());
-        return;
-    }
-    // The .NET warning is not repeated: reaching here means an analysis has already
-    // been run against this database, so it has been answered once.
-
-    // Annotations describe the results that produced them. If any are in place, put
-    // them back from the new results rather than leaving the old ones behind.
-    const bool was_annotated = has_annotations();
-
-    if (!do_analysis(dir)) return;
-
-    if (m_doc.empty()) {
-        if (was_annotated) remove_annotations_action();
-        // Emptied rather than closed: this runs from the window's own Reanalyze
-        // button, and tearing a widget down from inside its own callback is the kind
-        // of thing that only sometimes survives.
-        m_results.set_doc(m_doc);
-        m_details.show_message("capa found no capabilities in this database.",
-                               /*activate=*/false);
-        info("capa found no capabilities in this database.");
-        return;
+    ResultsDoc doc;
+    std::string error;
+    std::string json_text;
+    if (!run_analysis(dir, doc, error, &json_text)) {
+        if (!error.empty()) msg("capa: %s\n", error.c_str());
+        return false;
     }
 
-    show_results();
-    if (was_annotated) annotate_all();
+    m_doc = std::move(doc);
+    m_have_results = true;
+    set_cached_results(m_doc.to_json(), dir);
+
+    std::ofstream out(out_path, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        msg("capa: could not open %s for writing.\n", out_path.c_str());
+        return false;
+    }
+    out << json_text;
+    if (!out) {
+        msg("capa: failed writing results to %s\n", out_path.c_str());
+        return false;
+    }
+
+    msg("capa: %zu rule(s) matched over %zu function(s); wrote results to %s\n",
+        m_doc.match_count, m_doc.function_count, out_path.c_str());
+    return true;
+}
+
+//-------------------------------------------------------------------------
+const ResultNode* PluginCtx::find_rule_by_name(const std::string& name) const {
+    for (const ResultNode& r : m_doc.rules)
+        if (strip_match_count(r.info) == name) return &r;
+    return nullptr;
 }
 
 //-------------------------------------------------------------------------
@@ -378,68 +350,6 @@ void PluginCtx::restore_session() {
     // reinstates the pseudocode markers as a side effect when it finds them.
     if (!has_annotations()) return;
     if (!m_have_results) load_cached();
-}
-
-//-------------------------------------------------------------------------
-void PluginCtx::refresh_view(bool activate) {
-    ResultsDoc view = by_function() ? group_by_function(m_doc) : m_doc;
-    if (m_results.is_open()) {
-        // The window stays put; only its contents change.
-        m_results.set_doc(view);
-        return;
-    }
-    // The details pane goes up first so the explorer can dock beside it and so the
-    // first row's selection has somewhere to land.
-    m_details.show_message("Select a match to see why it matched.", /*activate=*/false);
-    m_results.open(view, activate);
-}
-
-//-------------------------------------------------------------------------
-// Called by ResultsView every time it builds a window, including the rebuilds it
-// schedules for itself.
-void PluginCtx::on_results_window_opened(TWidget* w) {
-    attach_actions(w);
-    set_dock_pos(DETAILS_TITLE, RESULTS_TITLE, DP_RIGHT);
-}
-
-//-------------------------------------------------------------------------
-void PluginCtx::show_results() {
-    if (!m_have_results && !load_cached()) {
-        analyze();
-        return;
-    }
-    if (m_doc.empty()) {
-        info("capa found no capabilities in this database.");
-        return;
-    }
-    refresh_view(/*activate=*/true);
-}
-
-//-------------------------------------------------------------------------
-void PluginCtx::choose_rules_dir() {
-    std::string dir = ask_rules_dir();
-    if (dir.empty()) return;
-    set_rules_dir(dir);
-    // Results from the previous rules say nothing about the new ones.
-    clear_results();
-    msg("capa: rules directory set to %s\n", dir.c_str());
-}
-
-//-------------------------------------------------------------------------
-void PluginCtx::clear_results() {
-    m_results.close();
-    m_details.close();
-    // Annotations describe results that are about to be discarded. Leaving them would
-    // put unexplained comments in the database and, worse, leave has_annotations()
-    // true against a cache that no longer exists — so nothing could restore them.
-    if (has_annotations()) {
-        remove_annotations();
-        set_pseudocode_annotations(AnnotationMap{});
-        refresh_idaview_anyway();
-    }
-    m_doc = ResultsDoc{};
-    m_have_results = false;
-    clear_cached_results();
 }
 
 //-------------------------------------------------------------------------
@@ -459,12 +369,14 @@ void PluginCtx::annotate_all() {
 
 //-------------------------------------------------------------------------
 void PluginCtx::annotate_selected() {
-    // The node belongs to the window's own copy of the results, which in the
-    // grouped-by-function view holds only the matches from one function — so this
-    // annotates exactly what the selected row stands for.
-    const ResultNode* rule = m_results.selected_rule();
+    const std::string name = headless_rule_name();
+    if (name.empty()) {
+        msg("capa: annotate_selected requested with no rule name set.\n");
+        return;
+    }
+    const ResultNode* rule = find_rule_by_name(name);
     if (rule == nullptr) {
-        info("capa: select a match in the capa explorer window first.");
+        msg("capa: '%s' is not among the last analysis's matched rules.\n", name.c_str());
         return;
     }
 
@@ -488,67 +400,12 @@ void PluginCtx::remove_annotations_action() {
 }
 
 //-------------------------------------------------------------------------
-bool PluginCtx::by_function() const { return show_results_by_function(); }
-bool PluginCtx::limit_to_function() const { return limit_to_current_function(); }
-bool PluginCtx::scan_system() const { return scan_system_modules(); }
-bool PluginCtx::flat() const { return flat_results(); }
-
-//-------------------------------------------------------------------------
-// Purely a display choice, so whatever is already loaded is simply rebuilt.
-void PluginCtx::toggle_flat_results() {
-    set_flat_results(!flat());
-    if (m_results.is_open() && m_have_results) refresh_view(/*activate=*/true);
-}
-
-//-------------------------------------------------------------------------
-// Unlike the two view toggles, this one changes what gets ANALYSED, not what gets
-// displayed — so the results on screen are now stale rather than merely regrouped.
-// Say so instead of silently leaving them up.
-void PluginCtx::toggle_scan_system_modules() {
-    set_scan_system_modules(!scan_system());
-    if (m_have_results)
-        info("capa: system modules will %s the next analysis.\n"
-             "Re-run \"Analyze with capa\" (Alt-F5) to apply this.",
-             scan_system() ? "be included in" : "be excluded from");
-}
-
-//-------------------------------------------------------------------------
-void PluginCtx::toggle_by_function() {
-    set_show_results_by_function(!by_function());
-    // Regrouping changes the tree itself, so the window is rebuilt rather than
-    // refreshed: the nodes the chooser held pointers into are gone.
-    if (m_results.is_open() && m_have_results) refresh_view(/*activate=*/true);
-}
-
-//-------------------------------------------------------------------------
-void PluginCtx::toggle_limit_to_function() {
-    set_limit_to_current_function(!limit_to_function());
-    // Remember which function the filter is now showing. Without this the cursor
-    // handler compares against a stale value and can decide there is nothing to do
-    // while the window shows some other function's matches.
-    m_limit_func_ea =
-        limit_to_function() ? capa::ida::func_start_of(get_screen_ea()) : BADADDR;
-    m_results.refresh_rows();
-}
-
-//-------------------------------------------------------------------------
 // UI and database notifications are delivered through two listeners rather than one.
 // ui_notification_t and idb_event::event_code_t are separate, dense, zero-based enums,
-// so their values collide wholesale — `closebase` is 0, and so is the first ui_
-// notification. A single switch over both cannot tell them apart, and would act on a
-// va_list belonging to something else entirely.
-ssize_t idaapi PluginCtx::on_ui_event(ssize_t code, va_list va) {
+// so their values collide wholesale — a single switch over both cannot tell them apart,
+// and would act on a va_list belonging to something else entirely.
+ssize_t idaapi PluginCtx::on_ui_event(ssize_t code, va_list /*va*/) {
     switch (code) {
-        case ui_widget_invisible: {
-            // IDA is destroying a widget: drop our pointer before it dangles.
-            TWidget* w = va_arg(va, TWidget*);
-            if (m_results.owns(w))
-                m_results.forget();
-            else if (m_details.owns(w))
-                m_details.forget();
-            break;
-        }
-
         case ui_ready_to_run:
             // The database is up. The disassembly's colours and comments were saved
             // with it, but the pseudocode markers are generated on the fly and would
@@ -559,26 +416,6 @@ ssize_t idaapi PluginCtx::on_ui_event(ssize_t code, va_list va) {
             // rebuilds that menu from the plugin list and drops anything else in it.
             ensure_menu();
             break;
-
-        case ui_screen_ea_changed: {
-            // "Limit to current function" is relative to where the cursor is, so the
-            // row list has to follow the cursor — but only when the cursor moved for a
-            // reason that matters.
-            if (!limit_to_function() || !m_results.is_open()) break;
-
-            // Selecting a row in the results window moves the screen ea itself. Acting
-            // on that would refilter the list out from under the arrow key that caused
-            // it, so navigation inside our own window does not count.
-            if (m_results.owns(get_current_widget())) break;
-
-            // Rebuilding is not free; moving within one function changes nothing.
-            ea_t fea = capa::ida::func_start_of(get_screen_ea());
-            if (fea == m_limit_func_ea) break;
-            m_limit_func_ea = fea;
-
-            m_results.refresh_rows();
-            break;
-        }
     }
     return 0;
 }
@@ -593,9 +430,7 @@ ssize_t idaapi PluginCtx::on_idb_event(ssize_t code, va_list /*va*/) {
             break;
 
         case idb_event::closebase:
-            // The window points into m_doc, which is about to go away.
-            m_results.close();
-            m_details.close();
+            // m_doc is about to go away.
             set_pseudocode_annotations(AnnotationMap{});
             m_doc = ResultsDoc{};
             m_have_results = false;
@@ -623,8 +458,8 @@ plugin_t PLUGIN = {
     nullptr,  // term: must be null for PLUGIN_MULTI
     nullptr,  // run:  must be null for PLUGIN_MULTI
     "Find capabilities in a binary with capa",
-    "Runs capa's rule set against the open database and shows which capabilities\n"
-    "matched, where, and why. Point it at a copy of capa's rules/ directory.",
+    "Runs capa's rule set against the open database. Used as a fast backend by the\n"
+    "Python capa explorer plugin; also usable standalone from Edit > Plugins > CAPA C++.",
     idacapa::WANTED_NAME,
     ""  // hotkeys come from the registered actions
 };

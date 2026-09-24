@@ -30,6 +30,17 @@ std::string annotation_record();
 void set_annotation_record(const std::string& json);
 void clear_annotation_record();
 
+// The native-backend bridge's own two parameters, written by the Python capa
+// explorer plugin (via a raw netnode write -- there is no shared header between the
+// two languages, so the netnode name and these two slots are the versioned contract;
+// see the indices in settings.cpp and capa/ida/plugin/native_backend.py) before
+// invoking a headless command (see plugin.h's HeadlessCmd) through
+// idaapi.load_and_run_plugin("ida-capa", cmd).
+std::string headless_output_path();
+void set_headless_output_path(const std::string& path);
+std::string headless_rule_name();
+void set_headless_rule_name(const std::string& name);
+
 // View toggles, mirroring capa explorer's two checkboxes. Persisted so the window
 // comes back the way it was left.
 bool show_results_by_function();

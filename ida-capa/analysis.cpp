@@ -494,58 +494,6 @@ std::string strip_match_count(const std::string& label) {
     return open == std::string::npos ? label : label.substr(0, open);
 }
 
-ResultsDoc group_by_function(const ResultsDoc& doc) {
-    ResultsDoc out;
-    out.valid = doc.valid;
-    out.rules_dir = doc.rules_dir;
-    out.function_count = doc.function_count;
-    out.feature_count = doc.feature_count;
-    out.rules_loaded = doc.rules_loaded;
-    out.match_count = doc.match_count;
-
-    // The explorer files rules into folders by `details`, which normally holds the
-    // namespace. Grouping by function means handing it the function's name there
-    // instead — same tree machinery, different shelving — and splitting each rule into
-    // one node per function so a rule that matched in three of them appears in three
-    // folders, carrying only that function's matches.
-    std::vector<std::pair<ea_t, ResultNode>> grouped;
-
-    for (const ResultNode& rule : doc.rules) {
-        // The rule's label counts its matches across the whole program; each split-off
-        // node lists only one function's, so the count is recomputed below.
-        const std::string bare_name = strip_match_count(rule.info);
-
-        std::map<ea_t, ResultNode> per_func;
-        for (const ResultNode& scope : rule.children) {
-            if (scope.address == BADADDR) continue;
-            ea_t fea = capa::ida::func_start_of(scope.address);
-            if (fea == BADADDR) continue;  // match is not inside a defined function
-
-            auto it = per_func.find(fea);
-            if (it == per_func.end()) {
-                ResultNode r = rule;
-                r.children.clear();
-                r.info = bare_name;
-                r.details = "function(" + capa::ida::get_ea_name(fea) + ")";
-                it = per_func.emplace(fea, std::move(r)).first;
-            }
-            it->second.children.push_back(scope);
-        }
-        for (auto& [fea, node] : per_func) {
-            if (node.children.size() > 1)
-                node.info = bare_name + " (" + std::to_string(node.children.size()) + " matches)";
-            grouped.emplace_back(fea, std::move(node));
-        }
-    }
-
-    std::sort(grouped.begin(), grouped.end(), [](const auto& a, const auto& b) {
-        if (a.first != b.first) return a.first < b.first;
-        return a.second.info < b.second.info;
-    });
-    for (auto& [fea, node] : grouped) out.rules.push_back(std::move(node));
-    return out;
-}
-
 // ---------------------------------------------------------------------------
 // analysis
 // ---------------------------------------------------------------------------

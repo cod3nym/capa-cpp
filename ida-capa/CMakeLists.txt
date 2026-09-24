@@ -106,8 +106,6 @@ ida_add_plugin(ida-capa
         # The plugin itself.
         settings.cpp
         analysis.cpp
-        view_results.cpp
-        view_details.cpp
         annotate.cpp
         pseudocode.cpp
         plugin.cpp

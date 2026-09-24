@@ -1,15 +1,20 @@
 // The ida-capa plugin object.
 //
 // It is both the plugmod_t IDA gets back from init() and the listener for the
-// database notifications we care about, so there is one owner for the analysis
-// results and the window that displays them.
+// database notifications we care about.
+//
+// ida-capa carries no UI of its own any more: it is a fast backend for the Python
+// "capa explorer" plugin (../capa/capa/ida/plugin), which drives it through
+// idaapi.load_and_run_plugin("ida-capa", cmd) -- see HeadlessCmd below -- passing
+// parameters through the settings netnode (settings.h) since a plugin's run() takes
+// only a single integer. What remains as native, interactively-triggered actions
+// (Edit > Plugins > CAPA C++) is just enough to be useful standalone: running an
+// analysis to have something to annotate, and annotating/removing annotations.
 #pragma once
 
 #include "pch.h"
 
 #include "analysis.h"
-#include "view_details.h"
-#include "view_results.h"
 
 namespace idacapa {
 
@@ -22,6 +27,27 @@ namespace idacapa {
 inline constexpr const char* BUILD_STAMP = __DATE__ " " __TIME__;
 
 extern const char* const WANTED_NAME;
+
+// The `arg` values run() dispatches on. This is the entire contract between the
+// Python bridge (native_backend.py) and this plugin; keep the two in sync by hand,
+// there is no shared header between the languages.
+//
+//   Ui                 -- default (Alt-F5 / the native menu's "Analyze"): interactive
+//                          analysis, prompting for a rules directory if none is set.
+//   Ping               -- no-op, just confirms the plugin is loadable.
+//   Analyze            -- headless: read settings::rules_dir()/headless_output_path(),
+//                          run capa, write a ResultDocument JSON to that path.
+//   AnnotateAll        -- annotate every match in the last analysis run.
+//   AnnotateSelected   -- annotate only the rule named by settings::headless_rule_name().
+//   RemoveAnnotations  -- undo whatever the last annotate wrote.
+enum class HeadlessCmd : size_t {
+    Ui = 0,
+    Ping = 1,
+    Analyze = 2,
+    AnnotateAll = 3,
+    AnnotateSelected = 4,
+    RemoveAnnotations = 5,
+};
 
 class PluginCtx : public plugmod_t {
 public:
@@ -36,36 +62,20 @@ public:
     ssize_t on_idb_event(ssize_t code, va_list va);
 
     // --- actions ----------------------------------------------------------
+    // Interactive: prompts for a rules directory if none is set, and reports a .NET
+    // warning the first time. Populates m_doc so annotate_all()/annotate_selected()
+    // have something to work with, same as the headless Analyze command does.
     void analyze();
-    void reanalyze();
-    void show_results();
-    void choose_rules_dir();
-    void clear_results();
 
     void annotate_all();
+    // Restricted to settings::headless_rule_name(); headless-only (there is no
+    // interactive row selection to drive this from any more).
     void annotate_selected();
     void remove_annotations_action();
-
-    void toggle_by_function();
-    void toggle_limit_to_function();
-    void toggle_scan_system_modules();
-    void toggle_flat_results();
-
-    // --- state read by the checkable actions ------------------------------
-    bool by_function() const;
-    bool limit_to_function() const;
-    bool scan_system() const;
-    bool flat() const;
-
-    DetailsView& details() { return m_details; }
-
-    // ResultsView calls this each time it builds its window.
-    void on_results_window_opened(TWidget* w);
 
 private:
     void register_actions();
     void unregister_actions();
-    void attach_actions(TWidget* w);
 
     // (Re)build the Edit > Plugins > CAPA C++ submenu. Idempotent.
     void ensure_menu();
@@ -77,8 +87,14 @@ private:
     // The analysis itself, once the rules directory is settled.
     bool do_analysis(const std::string& dir);
 
-    // Re-open the window from m_doc, honouring the "by function" toggle.
-    void refresh_view(bool activate);
+    // The headless Analyze command: like do_analysis(), but reads its rules
+    // directory from settings rather than prompting, and additionally writes a
+    // ResultDocument JSON to settings::headless_output_path() for the Python bridge.
+    bool run_headless_analyze();
+
+    // Find a matched rule by name (as capa names it, not the "name (N matches)"
+    // label a row shows) for annotate_selected().
+    const ResultNode* find_rule_by_name(const std::string& name) const;
 
     // Reinstate whatever a previous session left in this database (currently the
     // pseudocode markers, which are not saved with it). Idempotent.
@@ -86,9 +102,6 @@ private:
 
     ResultsDoc m_doc;      // as analysed, always "by program"
     bool m_have_results = false;
-    // The function the "limit" filter is currently showing, so a cursor move inside
-    // that same function does not trigger a rebuild.
-    ea_t m_limit_func_ea = BADADDR;
     // Set once the database is far enough along to read the netnode and resolve
     // addresses; see on_event().
     bool m_restored = false;
@@ -96,9 +109,6 @@ private:
     // one they were asked to go to; empty when nothing took them. Kept so they can be
     // detached from the right place.
     std::string m_menu_path;
-
-    ResultsView m_results{*this};
-    DetailsView m_details;
 
     // One listener per hook type, so a notification is always interpreted against the
     // enum it actually came from.
@@ -133,38 +143,9 @@ private:
         Fn fn;
     };
 
-    // Same, but ticks itself in the menu. IDA only reads the tick when the action is
-    // updated, so that is where it has to be set.
-    struct ToggleHandler : public action_handler_t {
-        using Fn = void (PluginCtx::*)();
-        using Get = bool (PluginCtx::*)() const;
-        ToggleHandler(PluginCtx& p, Fn fn, Get get) : plugin(p), fn(fn), get(get) {}
-        int idaapi activate(action_activation_ctx_t*) override {
-            (plugin.*fn)();
-            return 1;
-        }
-        action_state_t idaapi update(action_update_ctx_t* ctx) override {
-            update_action_checked(ctx->action, (plugin.*get)());
-            return AST_ENABLE_ALWAYS;
-        }
-        PluginCtx& plugin;
-        Fn fn;
-        Get get;
-    };
-
     ActionHandler m_analyze{*this, &PluginCtx::analyze};
-    ActionHandler m_show{*this, &PluginCtx::show_results};
-    ActionHandler m_rules{*this, &PluginCtx::choose_rules_dir};
-    ActionHandler m_clear{*this, &PluginCtx::clear_results};
     ActionHandler m_annotate{*this, &PluginCtx::annotate_all};
-    ActionHandler m_annotate_sel{*this, &PluginCtx::annotate_selected};
     ActionHandler m_unannotate{*this, &PluginCtx::remove_annotations_action};
-    ToggleHandler m_by_func{*this, &PluginCtx::toggle_by_function, &PluginCtx::by_function};
-    ToggleHandler m_limit{*this, &PluginCtx::toggle_limit_to_function,
-                          &PluginCtx::limit_to_function};
-    ToggleHandler m_scan_system{*this, &PluginCtx::toggle_scan_system_modules,
-                                &PluginCtx::scan_system};
-    ToggleHandler m_flat{*this, &PluginCtx::toggle_flat_results, &PluginCtx::flat};
 };
 
 }  // namespace idacapa
