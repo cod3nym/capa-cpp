@@ -326,21 +326,38 @@ json rule_meta_json(const Rule& r) {
     m["name"] = r.name;
     if (!r.namespace_.empty()) m["namespace"] = r.namespace_;
     m["authors"] = r.authors;
-    m["scopes"] = json{{"static", r.scopes.static_scope ? scope_to_string(*r.scopes.static_scope)
-                                                        : "unsupported"},
-                       {"dynamic", r.scopes.dynamic_scope ? scope_to_string(*r.scopes.dynamic_scope)
-                                                          : "unsupported"}};
+    // null, not a placeholder string: capa.rules.Scopes.static/dynamic are Optional
+    // fields meaning "not supported by this rule", and its Scope enum has no
+    // "unsupported" member for a literal string to deserialize into.
+    m["scopes"] = json{
+        {"static", r.scopes.static_scope ? json(scope_to_string(*r.scopes.static_scope))
+                                         : json(nullptr)},
+        {"dynamic", r.scopes.dynamic_scope ? json(scope_to_string(*r.scopes.dynamic_scope))
+                                           : json(nullptr)},
+    };
     json attack = json::array();
     for (const auto& a : r.attack) attack.push_back(attack_json(a));
-    m["attack"] = attack;
+    // Pydantic alias, not the field name: RuleMetadata.attack is declared with
+    // Field(alias="att&ck"), and neither FrozenModel nor RuleMetadata itself sets
+    // populate_by_name, so only the alias validates.
+    m["att&ck"] = attack;
     json mbc = json::array();
     for (const auto& b : r.mbc) mbc.push_back(mbc_json(b));
     m["mbc"] = mbc;
     m["references"] = r.references;
     m["examples"] = r.examples;
-    if (!r.description.empty()) m["description"] = r.description;
+    // Required, not Optional -- RuleMetadata.description has no default, so the key
+    // must be present even when the rule has no description of its own.
+    m["description"] = r.description;
     m["lib"] = r.is_lib;
-    m["is_subscope_rule"] = r.is_subscope;
+    // Same aliasing as att&ck above: RuleMetadata.is_subscope_rule's alias is
+    // "capa/subscope" (not "capa/subscope-rule" -- there is no "-rule" suffix).
+    m["capa/subscope"] = r.is_subscope;
+    // RuleMetadata.maec has no default -- the key must be present even though every
+    // one of MaecMetadata's own fields is optional. capa-cpp does not track MAEC
+    // analysis-conclusion metadata (see the README's IDA plugin limits), so this is
+    // always the empty object.
+    m["maec"] = json::object();
     return m;
 }
 
@@ -393,6 +410,14 @@ json document_meta(const RenderInput& in) {
     analysis["os"] = doc.os;
     analysis["extractor"] = doc.extractor_name;
     analysis["rules"] = doc.rule_paths;
+    // Only in capa's StaticAnalysis schema; DynamicAnalysis has neither field.
+    if (!dynamic) {
+        analysis["base_address"] = address_json(doc.base_address);
+        json libs = json::array();
+        for (const LibraryFunction& lf : doc.library_functions)
+            libs.push_back(json{{"address", address_json(lf.address)}, {"name", lf.name}});
+        analysis["library_functions"] = std::move(libs);
+    }
     // No "layout" here: it is the one part of `meta` whose size follows the trace -- one
     // entry per call any rule matched at, which on a large trace is hundreds of thousands
     // -- and materializing it was, measurably, the whole of what the renderer cost after

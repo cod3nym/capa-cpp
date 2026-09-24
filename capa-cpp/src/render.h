@@ -24,6 +24,7 @@
 #include "engine.h"
 #include "feature_extractor.h"  // SampleHashes
 #include "rules.h"
+#include "static_caps.h"  // LibraryFunction
 
 namespace capa::render {
 
@@ -74,6 +75,13 @@ struct Doc {
     std::string arch = "unknown";
     std::string format = "unknown";
     std::vector<std::string> rule_paths;  // meta.analysis.rules
+
+    // Static-only (capa's StaticAnalysis schema; DynamicAnalysis carries neither).
+    // Left at their defaults -- NO_ADDRESS, empty -- by a backend that cannot
+    // honestly compute one: the minidump backend has no single base address across
+    // several scanned regions, and reports no library functions of its own.
+    Address base_address;
+    std::vector<LibraryFunction> library_functions;
 
     std::vector<DynProcess> dyn_layout;         // Flavor::Dynamic
     std::vector<StaticFunction> static_layout;  // Flavor::Static

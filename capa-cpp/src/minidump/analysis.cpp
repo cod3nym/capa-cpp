@@ -219,6 +219,10 @@ render::Doc build_doc(const ProcessImage& img, const MinidumpCapabilities& caps,
     for (std::size_t k = 0; k + 1 < argv.size(); ++k)
         if (argv[k] == "-r" || argv[k] == "--rules-dir") doc.rule_paths.push_back(argv[k + 1]);
 
+    // doc.base_address and doc.library_functions stay at their defaults (NO_ADDRESS,
+    // empty): a multi-region scan has no single base address, and MinidumpCapabilities
+    // does not track library functions of its own. See the fields' comment in render.h.
+
     return doc;
 }
 
